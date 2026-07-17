@@ -1,0 +1,129 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+
+permissions:
+  contents: write # needed to attach release assets on tag builds
+
+jobs:
+  build:
+    name: Build, sign, notarize
+    runs-on: macos-14
+    env:
+      # Job-level copies of the secrets so steps can be skipped with
+      # `if: env.X != ''` (fork PRs have no secrets and still build unsigned).
+      MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+      MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+      KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+    steps:
+      - name: Check out sources
+        uses: actions/checkout@v4
+
+      - name: Determine version
+        id: version
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=0.0.0-$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run tests
+        run: swift test
+
+      - name: Build universal binary (arm64 + x86_64)
+        run: |
+          swift build -c release --arch arm64 --arch x86_64
+          lipo -archs .build/apple/Products/Release/DeskCal
+
+      - name: Assemble app bundle
+        run: scripts/make-app.sh "${{ steps.version.outputs.version }}"
+
+      - name: Import Developer ID certificate
+        if: env.MACOS_CERT_P12 != ''
+        run: |
+          KEYCHAIN="$RUNNER_TEMP/build.keychain-db"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          echo -n "$MACOS_CERT_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KEYCHAIN" \
+            -P "$MACOS_CERT_PASSWORD" -T /usr/bin/codesign
+          rm "$RUNNER_TEMP/cert.p12"
+          security set-key-partition-list -S apple-tool:,apple: \
+            -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" > /dev/null
+          security list-keychains -d user -s "$KEYCHAIN" login.keychain-db
+          echo "KEYCHAIN=$KEYCHAIN" >> "$GITHUB_ENV"
+
+      - name: Sign app (Developer ID, hardened runtime)
+        if: env.MACOS_CERT_P12 != ''
+        run: |
+          IDENTITY=$(security find-identity -v -p codesigning "$KEYCHAIN" \
+            | awk -F'"' '/Developer ID Application/ {print $2; exit}')
+          if [[ -z "$IDENTITY" ]]; then
+            echo "error: no Developer ID Application identity found in keychain" >&2
+            exit 1
+          fi
+          echo "Signing with: $IDENTITY"
+          codesign --force --options runtime --timestamp \
+            --entitlements Resources/DeskCal.entitlements \
+            --sign "$IDENTITY" dist/DeskCal.app
+          codesign --verify --strict --verbose=2 dist/DeskCal.app
+          echo "SIGNING_IDENTITY=$IDENTITY" >> "$GITHUB_ENV"
+
+      - name: Create DMG
+        run: scripts/make-dmg.sh "${{ steps.version.outputs.version }}"
+
+      - name: Sign DMG
+        if: env.MACOS_CERT_P12 != ''
+        run: |
+          codesign --force --timestamp --sign "$SIGNING_IDENTITY" \
+            "dist/DeskCal-${{ steps.version.outputs.version }}.dmg"
+
+      - name: Notarize and staple
+        if: env.MACOS_CERT_P12 != ''
+        run: |
+          DMG="dist/DeskCal-${{ steps.version.outputs.version }}.dmg"
+          xcrun notarytool submit "$DMG" \
+            --apple-id "$APPLE_ID" \
+            --team-id "$APPLE_TEAM_ID" \
+            --password "$APPLE_APP_SPECIFIC_PASSWORD" \
+            --wait
+          xcrun stapler staple "$DMG"
+          # Notarizing the DMG also issues a ticket for the nested app,
+          # so the loose copy can be stapled and shipped in the zip too.
+          xcrun stapler staple dist/DeskCal.app
+          spctl -a -t open --context context:primary-signature -vv "$DMG"
+
+      - name: Zip app bundle
+        run: |
+          ditto -c -k --keepParent dist/DeskCal.app \
+            "dist/DeskCal-${{ steps.version.outputs.version }}.zip"
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: DeskCal-${{ steps.version.outputs.version }}
+          path: |
+            dist/*.dmg
+            dist/*.zip
+
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.dmg
+            dist/*.zip
+          generate_release_notes: true
+
+      - name: Delete signing keychain
+        if: always() && env.KEYCHAIN != ''
+        run: security delete-keychain "$KEYCHAIN"
