@@ -109,6 +109,49 @@ public enum CalendarRenderer {
         style: RenderStyle,
         calendar: Calendar = defaultCalendar()
     ) -> NSAttributedString {
+        renderMonths(
+            offsets: Array(-style.monthsBefore...style.monthsAfter),
+            today: today,
+            style: style,
+            calendar: calendar
+        )
+    }
+
+    /// Just the grey months before the current month, if any.
+    public static func renderBeforeMonths(
+        today: Date,
+        style: RenderStyle,
+        calendar: Calendar = defaultCalendar()
+    ) -> NSAttributedString {
+        guard style.monthsBefore > 0 else { return NSAttributedString() }
+        return renderMonths(offsets: Array(-style.monthsBefore..<0), today: today, style: style, calendar: calendar)
+    }
+
+    /// Just the current month, in the active color with today highlighted.
+    public static func renderCurrentMonth(
+        today: Date,
+        style: RenderStyle,
+        calendar: Calendar = defaultCalendar()
+    ) -> NSAttributedString {
+        renderMonths(offsets: [0], today: today, style: style, calendar: calendar)
+    }
+
+    /// Just the grey months after the current month, if any.
+    public static func renderAfterMonths(
+        today: Date,
+        style: RenderStyle,
+        calendar: Calendar = defaultCalendar()
+    ) -> NSAttributedString {
+        guard style.monthsAfter > 0 else { return NSAttributedString() }
+        return renderMonths(offsets: Array(1...style.monthsAfter), today: today, style: style, calendar: calendar)
+    }
+
+    private static func renderMonths(
+        offsets: [Int],
+        today: Date,
+        style: RenderStyle,
+        calendar: Calendar
+    ) -> NSAttributedString {
         let result = NSMutableAttributedString()
         let todayComponents = calendar.dateComponents([.year, .month, .day], from: today)
 
@@ -119,14 +162,14 @@ public enum CalendarRenderer {
             ]))
         }
 
-        for offset in -style.monthsBefore...style.monthsAfter {
+        for (index, offset) in offsets.enumerated() {
             guard let monthDate = calendar.date(byAdding: .month, value: offset, to: today) else { continue }
             let year = calendar.component(.year, from: monthDate)
             let month = calendar.component(.month, from: monthDate)
             let isCurrent = offset == 0
             let baseColor = isCurrent ? style.activeColor : style.inactiveColor
 
-            if offset > -style.monthsBefore {
+            if index > 0 {
                 append("\n\n\n", baseColor)
             }
             append(title(year: year, month: month, calendar: calendar) + "\n", baseColor)

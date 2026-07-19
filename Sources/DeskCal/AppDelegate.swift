@@ -5,6 +5,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var desktopCalendar: DesktopCalendarController?
     private var preferences: PreferencesWindowController?
     private var observers: [NSObjectProtocol] = []
+    private var clockTimer: Timer?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let settings = Settings.shared
@@ -29,6 +30,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             forName: NSWorkspace.didWakeNotification, object: nil, queue: .main, using: refresh))
 
         desktopCalendar?.refresh()
+
+        // Keeps the world-clock times in sync with the system clock without
+        // waiting for another trigger. Skipped entirely when there's no
+        // world clock to keep current.
+        let timer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
+            guard let self = self, !settings.timeZones.isEmpty else { return }
+            self.desktopCalendar?.refresh()
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        clockTimer = timer
     }
 
     private func showPreferences() {

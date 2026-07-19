@@ -20,7 +20,7 @@ enum ScreenCorner: String, CaseIterable, Identifiable {
     }
 }
 
-/// UserDefaults-backed settings. Every mutation persists immediately and posts
+/// UserDefaults-backed settings. Mutations are persisted (debounced) and post
 /// `Settings.changed` so the desktop calendar re-renders live.
 final class Settings: ObservableObject {
     static let shared = Settings()
@@ -38,7 +38,15 @@ final class Settings: ObservableObject {
         static let offsetX = "offsetX"
         static let offsetY = "offsetY"
         static let launchAtLogin = "launchAtLogin"
+        static let timeZones = "timeZones"
     }
+
+    static let defaultTimeZones: [TimeZoneEntry] = [
+        TimeZoneEntry(identifier: "America/Denver"),
+        TimeZoneEntry(identifier: "America/Detroit"),
+        TimeZoneEntry(identifier: "Europe/Paris"),
+        TimeZoneEntry(identifier: "Asia/Seoul"),
+    ]
 
     @Published var fontName: String { didSet { persist() } }
     @Published var fontSize: Double { didSet { persist() } }
@@ -58,9 +66,22 @@ final class Settings: ObservableObject {
             }
         }
     }
+    /// Kept sorted by current UTC offset; any out-of-order mutation is
+    /// immediately re-sorted (the correcting assignment then persists).
+    @Published var timeZones: [TimeZoneEntry] {
+        didSet {
+            let sorted = TimeZoneRenderer.sortedByOffset(timeZones)
+            if sorted.map(\.id) != timeZones.map(\.id) {
+                timeZones = sorted
+            } else {
+                persist()
+            }
+        }
+    }
 
     private let defaults: UserDefaults
     private var loaded = false
+    private var persistWorkItem: DispatchWorkItem?
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -89,11 +110,27 @@ final class Settings: ObservableObject {
         offsetX = defaults.double(forKey: Key.offsetX)
         offsetY = defaults.double(forKey: Key.offsetY)
         launchAtLogin = defaults.bool(forKey: Key.launchAtLogin)
+        if let data = defaults.data(forKey: Key.timeZones),
+           let decoded = try? JSONDecoder().decode([TimeZoneEntry].self, from: data) {
+            timeZones = TimeZoneRenderer.sortedByOffset(decoded)
+        } else {
+            timeZones = TimeZoneRenderer.sortedByOffset(Settings.defaultTimeZones)
+        }
         loaded = true
     }
 
+    /// Debounces disk writes and the `Settings.changed` notification so rapid
+    /// edits (e.g. typing in a time-zone label) don't each trigger a synchronous
+    /// UserDefaults write and full desktop calendar re-render.
     private func persist() {
         guard loaded else { return }
+        persistWorkItem?.cancel()
+        let workItem = DispatchWorkItem { [weak self] in self?.writeToDisk() }
+        persistWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: workItem)
+    }
+
+    private func writeToDisk() {
         defaults.set(fontName, forKey: Key.fontName)
         defaults.set(fontSize, forKey: Key.fontSize)
         defaults.set(inactiveColorHex, forKey: Key.inactiveColor)
@@ -105,6 +142,9 @@ final class Settings: ObservableObject {
         defaults.set(offsetX, forKey: Key.offsetX)
         defaults.set(offsetY, forKey: Key.offsetY)
         defaults.set(launchAtLogin, forKey: Key.launchAtLogin)
+        if let data = try? JSONEncoder().encode(timeZones) {
+            defaults.set(data, forKey: Key.timeZones)
+        }
         NotificationCenter.default.post(name: Settings.changed, object: self)
     }
 

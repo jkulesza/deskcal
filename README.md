@@ -14,13 +14,19 @@ a highlight color (red).
 ## Features
 
 - Lives in the menubar (no Dock icon)
+- A world clock to the right of the current month, one line per time zone
+  (e.g. `Denver 19:51 Saturday, July 18`), automatically ordered by UTC offset
 - Configurable via **Preferences…** in the menubar menu:
   - Font (any fixed-pitch font installed) and font size
   - Active month, inactive month, and today font colors
   - Number of months prior and following the current month (0–12 each)
   - Screen corner anchor (top/bottom × left/right) plus X/Y pixel offsets
+  - Time zones shown in the world clock — add or remove any number; defaults
+    to Denver, Detroit, Paris, and Seoul
   - Launch at login
-- Redraws automatically at midnight, on wake from sleep, and when displays change
+- Redraws automatically at midnight, on wake from sleep, and when displays
+  change; also every 30 seconds while at least one time zone is configured,
+  to keep the world clock current
 - Universal binary (Apple Silicon + Intel), macOS 12 Monterey or later
 
 ## Install

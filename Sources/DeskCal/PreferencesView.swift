@@ -15,18 +15,22 @@ struct PreferencesView: View {
 
     var body: some View {
         Form {
-            fontSection
-            Divider()
-            colorSection
-            Divider()
-            rangeSection
-            Divider()
-            positionSection
+            Group {
+                fontSection
+                Divider()
+                colorSection
+                Divider()
+                rangeSection
+                Divider()
+                positionSection
+                Divider()
+            }
+            timeZoneSection
             Divider()
             Toggle("Launch at login", isOn: $settings.launchAtLogin)
         }
         .padding(20)
-        .frame(width: 360)
+        .frame(width: 420)
     }
 
     @ViewBuilder private var fontSection: some View {
@@ -80,6 +84,20 @@ struct PreferencesView: View {
             in: 0...2000,
             step: 4
         )
+    }
+
+    @ViewBuilder private var timeZoneSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Time zones").font(.headline)
+            ForEach($settings.timeZones) { $entry in
+                TimeZoneRow(entry: $entry) {
+                    settings.timeZones.removeAll { $0.id == entry.id }
+                }
+            }
+            Button("Add Time Zone") {
+                settings.timeZones.append(TimeZoneEntry(identifier: TimeZone.current.identifier))
+            }
+        }
     }
 
     private func colorBinding(_ hex: Binding<String>) -> Binding<Color> {

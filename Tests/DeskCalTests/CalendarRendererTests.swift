@@ -136,3 +136,50 @@ final class CalendarRendererTests: XCTestCase {
         XCTAssertFalse(text.contains("August 2026"))
     }
 }
+
+final class TimeZoneRendererTests: XCTestCase {
+    private func date(_ isoString: String) -> Date {
+        let formatter = ISO8601DateFormatter()
+        return formatter.date(from: isoString)!
+    }
+
+    func testLinesRightAlignLabelsAndLeftAlignTimes() {
+        let entries = [
+            TimeZoneEntry(identifier: "America/Denver"),
+            TimeZoneEntry(identifier: "Europe/Paris"),
+        ]
+        let now = date("2026-07-18T19:51:00Z")
+        let lines = TimeZoneRenderer.lines(for: entries, now: now)
+
+        XCTAssertEqual(lines.count, 2)
+        XCTAssertTrue(lines[0].hasPrefix("Denver "))
+        XCTAssertTrue(lines[1].hasPrefix(" Paris "))
+        XCTAssertTrue(lines[0].contains(":")) // time itself keeps HH:mm
+        XCTAssertEqual(lines[0].count, lines[1].count)
+    }
+
+    func testEmptyEntriesProduceNoLines() {
+        XCTAssertEqual(TimeZoneRenderer.lines(for: []), [])
+    }
+
+    func testDisplayLabelStripsRegionPrefix() {
+        XCTAssertEqual(TimeZoneEntry(identifier: "America/Denver").displayLabel, "Denver")
+        XCTAssertEqual(TimeZoneEntry(identifier: "Asia/Seoul").displayLabel, "Seoul")
+        XCTAssertEqual(
+            TimeZoneEntry(identifier: "America/Argentina/Buenos_Aires").displayLabel,
+            "Argentina/Buenos Aires"
+        )
+        XCTAssertEqual(TimeZoneEntry(identifier: "UTC").displayLabel, "UTC")
+    }
+
+    func testSortedByOffsetOrdersEarliestFirst() {
+        let entries = [
+            TimeZoneEntry(identifier: "Asia/Seoul"),
+            TimeZoneEntry(identifier: "America/Denver"),
+            TimeZoneEntry(identifier: "Europe/Paris"),
+        ]
+        let now = date("2026-07-18T19:51:00Z")
+        let sorted = TimeZoneRenderer.sortedByOffset(entries, now: now).map(\.identifier)
+        XCTAssertEqual(sorted, ["America/Denver", "Europe/Paris", "Asia/Seoul"])
+    }
+}
